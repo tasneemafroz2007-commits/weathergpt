@@ -8,7 +8,11 @@ import {
   ShieldCheck,
   ArrowDown,
   ArrowUp,
-  Clock
+  Clock,
+  Sunrise,
+  Sunset,
+  Gauge,
+  MapPin
 } from 'lucide-react';
 import { WeatherIcon } from './WeatherIcon';
 
@@ -16,16 +20,16 @@ export function WeatherCard({
   consensus,
   locationName,
   updatedAt,
-  sourceCount = 3
+  sourceCount = 1
 }) {
   if (!consensus) return null;
 
   return (
     <div className="card weather-card-consensus">
       <div className="card-header-subtle">
-        <div className="consensus-tag">
-          <ShieldCheck size={14} className="text-emerald" />
-          <span>Consensus Weather Estimate ({sourceCount} models)</span>
+        <div className="consensus-location-title">
+          <MapPin size={16} className="text-accent" />
+          <h2 className="location-heading-name">{locationName}</h2>
         </div>
         <div className="consensus-time">
           <Clock size={12} />
@@ -37,8 +41,8 @@ export function WeatherCard({
         <div className="weather-primary-col">
           <div className="weather-condition-badge">
             <WeatherIcon
-              name={consensus.weatherCode || 'cloud-sun'}
-              size={36}
+              code={consensus.weatherCode || 'cloud-sun'}
+              size={42}
               className="weather-main-icon"
             />
             <span className="condition-text">{consensus.condition}</span>
@@ -71,7 +75,7 @@ export function WeatherCard({
             <div className="metric-content">
               <span className="metric-label">Rain Probability</span>
               <span className="metric-value font-highlight">{consensus.rainProbability}%</span>
-              <span className="metric-sub">Weighted consensus</span>
+              <span className="metric-sub">Precipitation likelihood</span>
             </div>
           </div>
 
@@ -102,9 +106,32 @@ export function WeatherCard({
               <Sun size={16} />
             </div>
             <div className="metric-content">
-              <span className="metric-label">UV Index</span>
+              <span className="metric-label">UV & Air Quality</span>
               <span className="metric-value">{consensus.uvIndex || 4} / 11</span>
-              <span className="metric-sub">Air AQI: {consensus.airQuality?.aqi || 48} ({consensus.airQuality?.status || 'Good'})</span>
+              <span className="metric-sub">AQI: {consensus.airQuality?.aqi || 42} ({consensus.airQuality?.status || 'Good'})</span>
+            </div>
+          </div>
+
+          {/* Extended Metrics: Sunrise, Sunset, Visibility */}
+          <div className="metric-box">
+            <div className="metric-icon-wrap sun-times">
+              <Sunrise size={16} />
+            </div>
+            <div className="metric-content">
+              <span className="metric-label">Sunrise / Sunset</span>
+              <span className="metric-value">{consensus.sunrise || '06:15 AM'}</span>
+              <span className="metric-sub">Sunset: {consensus.sunset || '06:45 PM'}</span>
+            </div>
+          </div>
+
+          <div className="metric-box">
+            <div className="metric-icon-wrap visibility">
+              <Eye size={16} />
+            </div>
+            <div className="metric-content">
+              <span className="metric-label">Visibility</span>
+              <span className="metric-value">{consensus.visibility || '10 km'}</span>
+              <span className="metric-sub">Pressure: {consensus.pressure} hPa</span>
             </div>
           </div>
         </div>

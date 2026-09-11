@@ -1,17 +1,17 @@
 import React from 'react';
-import { CloudLightning, MapPin } from 'lucide-react';
-import { LOCATIONS } from '../data/mockWeather';
+import { CloudLightning } from 'lucide-react';
+import { SearchBar } from './SearchBar';
+import { ThemeToggle } from './ThemeToggle';
 
 export function Header({
-  selectedLocation,
-  onLocationChange,
-  activeMode,
+  onSelectLocation,
+  onUseCurrentLocation,
   lastUpdated,
   isLiveMode
 }) {
   return (
     <header className="app-header">
-      <div className="header-left">
+      <div className="header-brand-section">
         <div className="brand-badge">
           <div className="brand-icon">
             <CloudLightning size={22} className="text-accent" />
@@ -23,33 +23,28 @@ export function Header({
             </div>
             <p className="brand-subtitle">
               {isLiveMode
-                ? 'Real-Time Open-Meteo Ingestion & Domain-Adaptive Impact Forecasting'
-                : 'Multi-Source Consensus & Domain-Adaptive Forecasting'}
+                ? 'Global Open-Meteo Telemetry & Domain-Adaptive Intelligence'
+                : 'Multi-Source Model Consensus & Impact Forecasting'}
             </p>
           </div>
         </div>
       </div>
 
-      <div className="header-right">
-        <div className="location-picker">
-          <MapPin size={16} className="location-icon" />
-          <label htmlFor="location-select" className="sr-only">Select Location</label>
-          <select
-            id="location-select"
-            value={selectedLocation}
-            onChange={(e) => onLocationChange(e.target.value)}
-            className="location-select"
-          >
-            {LOCATIONS.map((loc) => (
-              <option key={loc.id} value={loc.id}>
-                {loc.name}, {loc.region}
-              </option>
-            ))}
-          </select>
-        </div>
+      <div className="header-center-search">
+        <SearchBar
+          onSelectLocation={onSelectLocation}
+          onUseCurrentLocation={onUseCurrentLocation}
+        />
+      </div>
+
+      <div className="header-controls-section">
+        <ThemeToggle />
 
         <div className="header-meta">
-          <span className="live-pulse-dot" title={isLiveMode ? "Live Open-Meteo stream connected" : "Demo model simulation active"}></span>
+          <span
+            className="live-pulse-dot"
+            title={isLiveMode ? 'Live Open-Meteo API stream connected' : 'Demo scenario simulation active'}
+          ></span>
           <span className="sync-time">
             <strong>{isLiveMode ? 'Live API' : 'Demo Mode'}</strong> • {lastUpdated || 'just now'}
           </span>

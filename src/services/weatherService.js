@@ -2,20 +2,14 @@
  * ============================================================================
  * Weather Service Adapter Layer
  * ============================================================================
- *
  * Supports two distinct data modes:
  * 1. LIVE WEATHER MODE:
- *    Fetches real-time observations and forecasts from the free Open-Meteo API
- *    (no API key required). Converts Open-Meteo response into the application's
- *    standardized internal schema.
+ *    Fetches real-time observations and 7-day forecasts from Open-Meteo API.
+ *    Converts Open-Meteo response into the application's standardized schema.
  *
  * 2. DEMO SCENARIO MODE:
- *    Uses the 3 hypothetical forecast models from mockWeather.js to demonstrate
+ *    Uses hypothetical forecast models from mockWeather.js to demonstrate
  *    multi-model variance, consensus, and confidence calculations.
- *
- * FALLBACK SAFETY:
- * If an Open-Meteo API request fails (e.g. offline or rate limited), the service
- * automatically falls back to cached mock data with an informative notice.
  * ============================================================================
  */
 
@@ -46,12 +40,30 @@ export function degreesToCardinal(deg = 0) {
     'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'
   ];
   const index = Math.round(deg / 22.5) % 16;
-  return cardinals[index] || 'SW';
+  return cardinals[index] || 'N';
 }
 
 /**
- * Map standard WMO (World Meteorological Organization) weather interpretation codes
- * to user-friendly conditions and icon identifiers.
+ * Format ISO time string (e.g. "2026-09-11T06:12") into readable 12-hour format ("06:12 AM")
+ */
+export function formatSunTime(isoStr) {
+  if (!isoStr) return '--:--';
+  try {
+    const parts = isoStr.split('T');
+    if (parts.length < 2) return isoStr;
+    const timePart = parts[1].slice(0, 5);
+    const [h, m] = timePart.split(':').map(Number);
+    const period = h >= 12 ? 'PM' : 'AM';
+    const h12 = h % 12 || 12;
+    const formattedH = h12 < 10 ? `0${h12}` : `${h12}`;
+    return `${formattedH}:${m < 10 ? '0' + m : m} ${period}`;
+  } catch (e) {
+    return isoStr;
+  }
+}
+
+/**
+ * Map WMO weather codes to readable condition labels and icon IDs
  */
 export function mapWmoCode(code) {
   switch (code) {
@@ -101,14 +113,9 @@ export function mapWmoCode(code) {
 /**
  * Fetch real weather data from the public Open-Meteo REST API.
  * Endpoint requires NO API KEY.
- *
- * @param {number} lat - Latitude
- * @param {number} lon - Longitude
- * @param {string} locationName - Human-readable label
- * @returns {Promise<Object>} Formatted weather payload
  */
 export async function fetchLiveOpenMeteoWeather(lat = 12.9716, lon = 77.5946, locationName = 'Bengaluru, India') {
-  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,surface_pressure,wind_speed_10m,wind_direction_10m&hourly=temperature_2m,precipitation_probability,weather_code,visibility,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,uv_index_max,precipitation_probability_max&timezone=auto`;
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,surface_pressure,wind_speed_10m,wind_direction_10m&hourly=temperature_2m,relative_humidity_2m,precipitation_probability,weather_code,surface_pressure,visibility,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,apparent_temperature_max,apparent_temperature_min,sunrise,sunset,uv_index_max,precipitation_probability_max,wind_speed_10m_max&timezone=auto`;
 
   const res = await fetch(url);
   if (!res.ok) {
@@ -132,14 +139,17 @@ export async function fetchLiveOpenMeteoWeather(lat = 12.9716, lon = 77.5946, lo
   const tempHigh = Math.round(daily.temperature_2m_max?.[0] ?? currentTemp + 3);
   const tempLow = Math.round(daily.temperature_2m_min?.[0] ?? currentTemp - 4);
 
+  const sunrise = formatSunTime(daily.sunrise?.[0]);
+  const sunset = formatSunTime(daily.sunset?.[0]);
+
   // Format visibility in km
   const rawVisibility = hourly.visibility?.[0] ?? 10000;
   const visibilityStr = `${Math.round(rawVisibility / 1000)} km`;
 
-  // Sample 6 intervals over the next 24 hours (every 4 hours)
+  // Process 24-hour hourly forecast
   const hourlyNodes = [];
   const totalHourlyPoints = hourly.time?.length || 0;
-  for (let i = 0; i < Math.min(24, totalHourlyPoints); i += 4) {
+  for (let i = 0; i < Math.min(24, totalHourlyPoints); i++) {
     const rawTime = hourly.time[i];
     const timeStr = rawTime ? rawTime.split('T')[1]?.slice(0, 5) : `${i}:00`;
     const wmo = mapWmoCode(hourly.weather_code?.[i] ?? 0);
@@ -148,11 +158,41 @@ export async function fetchLiveOpenMeteoWeather(lat = 12.9716, lon = 77.5946, lo
       temp: Math.round(hourly.temperature_2m?.[i] ?? currentTemp),
       rain: Math.round(hourly.precipitation_probability?.[i] ?? 0),
       wind: Math.round(hourly.wind_speed_10m?.[i] ?? windSpeed),
-      icon: wmo.weatherCode
+      humidity: Math.round(hourly.relative_humidity_2m?.[i] ?? humidity),
+      icon: wmo.weatherCode,
+      condition: wmo.condition
     });
   }
 
-  // Consensus object represents the single real-world truth
+  // Process 7-day daily forecast
+  const dailyForecast = [];
+  const daysOfWeek = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const totalDailyPoints = daily.time?.length || 0;
+
+  for (let i = 0; i < Math.min(7, totalDailyPoints); i++) {
+    const dateStr = daily.time[i]; // e.g. "2026-09-11"
+    const dateObj = new Date(dateStr);
+    const dayLabel = i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : daysOfWeek[dateObj.getDay()];
+    const wmo = mapWmoCode(daily.weather_code?.[i] ?? 0);
+
+    dailyForecast.push({
+      day: dayLabel,
+      date: dateStr,
+      tempMax: Math.round(daily.temperature_2m_max?.[i] ?? currentTemp + 2),
+      tempMin: Math.round(daily.temperature_2m_min?.[i] ?? currentTemp - 3),
+      feelsMax: Math.round(daily.apparent_temperature_max?.[i] ?? currentTemp + 2),
+      feelsMin: Math.round(daily.apparent_temperature_min?.[i] ?? currentTemp - 3),
+      rainProb: Math.round(daily.precipitation_probability_max?.[i] ?? 10),
+      windMax: Math.round(daily.wind_speed_10m_max?.[i] ?? windSpeed),
+      uvIndexMax: Math.round(daily.uv_index_max?.[i] ?? uvIndex),
+      sunrise: formatSunTime(daily.sunrise?.[i]),
+      sunset: formatSunTime(daily.sunset?.[i]),
+      condition: wmo.condition,
+      weatherCode: wmo.weatherCode
+    });
+  }
+
+  // Consensus object
   const consensus = {
     temperature: currentTemp,
     feelsLike,
@@ -164,13 +204,14 @@ export async function fetchLiveOpenMeteoWeather(lat = 12.9716, lon = 77.5946, lo
     weatherCode: currentWmo.weatherCode,
     pressure,
     uvIndex,
-    airQuality: { aqi: 42, status: 'Normal', pm25: 9.8 },
+    airQuality: { aqi: 42, status: 'Good', pm25: 9.8 },
     visibility: visibilityStr,
     tempHigh,
-    tempLow
+    tempLow,
+    sunrise,
+    sunset
   };
 
-  // Honest single live source representation (Requirement 8)
   const liveSource = {
     id: 'source-open-meteo',
     name: 'Open-Meteo Live API',
@@ -185,13 +226,12 @@ export async function fetchLiveOpenMeteoWeather(lat = 12.9716, lon = 77.5946, lo
     status: 'Operational Live Feed'
   };
 
-  // Multi-source agreement is explicitly PAUSED for single-source mode (Requirement 9)
   const confidence = {
     isLiveSingleSource: true,
     level: 'LIVE',
     score: null,
     badgeColor: 'cyan',
-    shortExplanation: 'Live real-time weather feed from Open-Meteo API. Single-source live mode is active.',
+    shortExplanation: 'Live real-time weather feed from Open-Meteo API.',
     subExplanation: 'Multi-source model agreement calculation requires at least 2 independent forecast models.',
     comparison: {
       sourceCount: 1,
@@ -205,7 +245,6 @@ export async function fetchLiveOpenMeteoWeather(lat = 12.9716, lon = 77.5946, lo
       'Single-source live feed active. Multi-source model agreement scoring is paused because only one real weather source is connected. To view multi-source consensus scoring, switch to Demo Scenario mode.'
   };
 
-  // Generate live weather alerts if conditions warrant caution
   const alerts = [];
   if (rainProb >= 65) {
     alerts.push({
@@ -225,7 +264,6 @@ export async function fetchLiveOpenMeteoWeather(lat = 12.9716, lon = 77.5946, lo
     });
   }
 
-  // Pre-compute rule-based impact insights using the REAL live weather values
   const impactInsights = {
     farmer: generateImpactInsights('farmer', { consensus }),
     traveller: generateImpactInsights('traveller', { consensus }),
@@ -243,6 +281,7 @@ export async function fetchLiveOpenMeteoWeather(lat = 12.9716, lon = 77.5946, lo
     consensus,
     sources: [liveSource],
     hourly: hourlyNodes,
+    dailyForecast,
     alerts,
     confidence,
     comparison: confidence.comparison,
@@ -252,12 +291,6 @@ export async function fetchLiveOpenMeteoWeather(lat = 12.9716, lon = 77.5946, lo
 
 /**
  * Universal data getter supporting both Live Weather and Demo Scenarios
- *
- * @param {string} locationId - e.g. 'bengaluru', 'tokyo', 'london'
- * @param {string} scenarioId - 'LIVE_WEATHER' | 'HIGH_AGREEMENT' | 'MODERATE_AGREEMENT' | 'LOW_AGREEMENT'
- * @param {boolean} isLiveMode - Force live Open-Meteo fetch
- * @param {Object} customCoords - Optional { lat, lon, label } for user geolocation
- * @returns {Promise<Object>} Formatted weather payload
  */
 export async function getWeatherData(
   locationId = 'bengaluru',
@@ -265,19 +298,18 @@ export async function getWeatherData(
   isLiveMode = false,
   customCoords = null
 ) {
-  // Check if live mode requested
   if (isLiveMode || scenarioId === 'LIVE_WEATHER') {
     try {
       let lat = 12.9716;
       let lon = 77.5946;
       let label = 'Bengaluru, India';
 
-      if (customCoords && customCoords.lat && customCoords.lon) {
+      if (customCoords && customCoords.lat !== undefined && customCoords.lon !== undefined) {
         lat = customCoords.lat;
         lon = customCoords.lon;
-        label = customCoords.label || `Live (${lat.toFixed(2)}, ${lon.toFixed(2)})`;
+        label = customCoords.displayName || customCoords.label || `Live (${lat.toFixed(2)}, ${lon.toFixed(2)})`;
       } else {
-        const foundLoc = LOCATIONS.find(l => l.id === locationId) || LOCATIONS[0];
+        const foundLoc = LOCATIONS.find((l) => l.id === locationId) || LOCATIONS[0];
         lat = foundLoc.coordinates.lat;
         lon = foundLoc.coordinates.lon;
         label = `${foundLoc.name}, ${foundLoc.region}`;
@@ -286,7 +318,6 @@ export async function getWeatherData(
       return await fetchLiveOpenMeteoWeather(lat, lon, label);
     } catch (err) {
       console.warn('Open-Meteo live API request failed. Falling back to cached mock data.', err);
-      // Fallback: load corresponding mock data gracefully (Requirement 5)
       const cityData = MOCK_DATA[locationId] || MOCK_DATA.bengaluru;
       const fallbackScenario = cityData.HIGH_AGREEMENT;
       const confidence = calculateConfidence(fallbackScenario.sources);
@@ -300,9 +331,22 @@ export async function getWeatherData(
         scenarioId: 'HIGH_AGREEMENT',
         locationName: `${fallbackScenario.location} (Offline Fallback)`,
         updatedAt: 'Using cached offline data',
-        consensus: fallbackScenario.consensus,
+        consensus: {
+          ...fallbackScenario.consensus,
+          sunrise: '06:15 AM',
+          sunset: '06:45 PM'
+        },
         sources: fallbackScenario.sources,
         hourly: fallbackScenario.hourly,
+        dailyForecast: [
+          { day: 'Today', date: '2026-09-11', tempMax: 29, tempMin: 21, rainProb: 80, condition: 'Scattered Showers', weatherCode: 'cloud-rain', sunrise: '06:15 AM', sunset: '06:45 PM' },
+          { day: 'Tomorrow', date: '2026-09-12', tempMax: 28, tempMin: 20, rainProb: 65, condition: 'Light Rain', weatherCode: 'cloud-drizzle', sunrise: '06:15 AM', sunset: '06:45 PM' },
+          { day: 'Sun', date: '2026-09-13', tempMax: 30, tempMin: 22, rainProb: 40, condition: 'Partly Cloudy', weatherCode: 'cloud-sun', sunrise: '06:16 AM', sunset: '06:44 PM' },
+          { day: 'Mon', date: '2026-09-14', tempMax: 31, tempMin: 22, rainProb: 20, condition: 'Clear Sky', weatherCode: 'sun', sunrise: '06:16 AM', sunset: '06:43 PM' },
+          { day: 'Tue', date: '2026-09-15', tempMax: 29, tempMin: 21, rainProb: 50, condition: 'Isolated Thunderstorms', weatherCode: 'cloud-lightning', sunrise: '06:16 AM', sunset: '06:42 PM' },
+          { day: 'Wed', date: '2026-09-16', tempMax: 28, tempMin: 20, rainProb: 75, condition: 'Moderate Rain', weatherCode: 'cloud-rain', sunrise: '06:17 AM', sunset: '06:41 PM' },
+          { day: 'Thu', date: '2026-09-17', tempMax: 27, tempMin: 19, rainProb: 30, condition: 'Overcast', weatherCode: 'cloud', sunrise: '06:17 AM', sunset: '06:40 PM' }
+        ],
         alerts: [
           {
             id: 'alert-fallback',
@@ -325,7 +369,7 @@ export async function getWeatherData(
     }
   }
 
-  // Demo Scenario Mode (Multi-source simulation)
+  // Demo Scenario Mode
   return new Promise((resolve, reject) => {
     setTimeout(() => {
       try {
@@ -336,11 +380,9 @@ export async function getWeatherData(
           throw new Error(`Scenario ${scenarioId} not found for location ${locationId}`);
         }
 
-        // Calculate dynamic multi-source agreement metrics across the 3 models
         const confidence = calculateConfidence(scenarioData.sources);
         const comparison = compareSources(scenarioData.sources);
 
-        // Pre-compute insights for each mode
         const impactInsights = {
           farmer: generateImpactInsights('farmer', scenarioData),
           traveller: generateImpactInsights('traveller', scenarioData),
@@ -348,15 +390,32 @@ export async function getWeatherData(
           health: generateImpactInsights('health', scenarioData)
         };
 
+        const consensus = {
+          ...scenarioData.consensus,
+          sunrise: '06:15 AM',
+          sunset: '06:45 PM'
+        };
+
+        const dailyForecast = [
+          { day: 'Today', date: '2026-09-11', tempMax: consensus.tempHigh || 29, tempMin: consensus.tempLow || 21, rainProb: consensus.rainProbability, condition: consensus.condition, weatherCode: consensus.weatherCode, sunrise: '06:15 AM', sunset: '06:45 PM' },
+          { day: 'Tomorrow', date: '2026-09-12', tempMax: (consensus.tempHigh || 29) - 1, tempMin: (consensus.tempLow || 21) - 1, rainProb: Math.max(10, consensus.rainProbability - 15), condition: 'Partly Cloudy', weatherCode: 'cloud-sun', sunrise: '06:15 AM', sunset: '06:45 PM' },
+          { day: 'Sun', date: '2026-09-13', tempMax: (consensus.tempHigh || 29) + 1, tempMin: consensus.tempLow || 21, rainProb: Math.min(90, consensus.rainProbability + 10), condition: 'Scattered Showers', weatherCode: 'cloud-rain', sunrise: '06:16 AM', sunset: '06:44 PM' },
+          { day: 'Mon', date: '2026-09-14', tempMax: (consensus.tempHigh || 29) + 2, tempMin: (consensus.tempLow || 21) + 1, rainProb: 20, condition: 'Clear Sky', weatherCode: 'sun', sunrise: '06:16 AM', sunset: '06:43 PM' },
+          { day: 'Tue', date: '2026-09-15', tempMax: consensus.tempHigh || 29, tempMin: consensus.tempLow || 21, rainProb: 35, condition: 'Passing Clouds', weatherCode: 'cloud-sun', sunrise: '06:16 AM', sunset: '06:42 PM' },
+          { day: 'Wed', date: '2026-09-16', tempMax: (consensus.tempHigh || 29) - 2, tempMin: (consensus.tempLow || 21) - 1, rainProb: 70, condition: 'Moderate Rain', weatherCode: 'cloud-rain', sunrise: '06:17 AM', sunset: '06:41 PM' },
+          { day: 'Thu', date: '2026-09-17', tempMax: (consensus.tempHigh || 29) - 1, tempMin: (consensus.tempLow || 21) - 2, rainProb: 25, condition: 'Overcast', weatherCode: 'cloud', sunrise: '06:17 AM', sunset: '06:40 PM' }
+        ];
+
         const payload = {
           isLiveMode: false,
           locationId,
           scenarioId,
           locationName: scenarioData.location,
           updatedAt: scenarioData.updatedAt,
-          consensus: scenarioData.consensus,
+          consensus,
           sources: scenarioData.sources,
           hourly: scenarioData.hourly,
+          dailyForecast,
           alerts: scenarioData.alerts || [],
           confidence,
           comparison,

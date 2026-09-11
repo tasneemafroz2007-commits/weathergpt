@@ -1,9 +1,11 @@
 import React from 'react';
-import { LayoutDashboard, Layers, Sparkles, BarChart2 } from 'lucide-react';
+import { LayoutDashboard, Calendar, Bot, Layers, Sparkles, BarChart2 } from 'lucide-react';
 
 export function Navigation({ activeTab, onTabChange, alertCount = 0 }) {
   const tabs = [
     { id: 'dashboard', label: 'Overview Dashboard', icon: LayoutDashboard },
+    { id: 'forecasts', label: 'Detailed Forecasts', icon: Calendar },
+    { id: 'assistant', label: 'WeatherGPT AI', icon: Bot },
     { id: 'evidence', label: 'Evidence & Confidence', icon: Layers },
     { id: 'impact', label: 'Impact Modes', icon: Sparkles, badge: alertCount > 0 ? alertCount : null },
     { id: 'charts', label: 'Source Comparison', icon: BarChart2 }

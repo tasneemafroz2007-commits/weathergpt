@@ -3,6 +3,8 @@ import { Header } from '../components/Header';
 import { Navigation } from '../components/Navigation';
 import { StateControls } from '../components/StateControls';
 import { WeatherCard } from '../components/WeatherCard';
+import { ForecastSection } from '../components/ForecastSection';
+import { WeatherGPTAssistant } from '../components/WeatherGPTAssistant';
 import { ConfidenceCard } from '../components/ConfidenceCard';
 import { SourceCard } from '../components/SourceCard';
 import { WhyConfidenceModal } from '../components/WhyConfidenceModal';
@@ -17,12 +19,21 @@ import { getWeatherData } from '../services/weatherService';
 import { generateImpactInsights } from '../utils/impactModes';
 
 export function Dashboard() {
-  const [selectedLocation, setSelectedLocation] = useState('bengaluru');
+  // Selected location object: defaults to Bengaluru
+  const [selectedLocationObj, setSelectedLocationObj] = useState({
+    id: 'bengaluru',
+    name: 'Bengaluru',
+    displayName: 'Bengaluru, Karnataka, India',
+    latitude: 12.9716,
+    longitude: 77.5946,
+    country: 'India'
+  });
+
   const [selectedScenario, setSelectedScenario] = useState('HIGH_AGREEMENT');
   const [isLiveMode, setIsLiveMode] = useState(true); // Default to real-time Open-Meteo feed
   const [activeMode, setActiveMode] = useState('farmer');
   const [activeTab, setActiveTab] = useState('dashboard');
-  
+
   // UI test states: 'normal' | 'loading' | 'error' | 'empty'
   const [uiState, setUiState] = useState('normal');
   const [isLoading, setIsLoading] = useState(false);
@@ -32,12 +43,17 @@ export function Dashboard() {
   // Modal control
   const [isWhyModalOpen, setIsWhyModalOpen] = useState(false);
 
-  // Fetch weather data from either Live Open-Meteo or Demo Scenarios
-  const fetchData = useCallback(async (location, scenario, liveMode) => {
+  // Fetch weather data for selected location object (live coordinates or demo scenario)
+  const fetchData = useCallback(async (locObj, scenario, liveMode) => {
     setIsLoading(true);
     setErrorMessage(null);
     try {
-      const data = await getWeatherData(location, scenario, liveMode);
+      const customCoords = {
+        lat: locObj.latitude,
+        lon: locObj.longitude,
+        displayName: locObj.displayName || locObj.name
+      };
+      const data = await getWeatherData(locObj.id || 'bengaluru', scenario, liveMode, customCoords);
       setWeatherData(data);
     } catch (err) {
       setErrorMessage(err.message || 'Failed to fetch weather telemetry.');
@@ -47,17 +63,26 @@ export function Dashboard() {
   }, []);
 
   useEffect(() => {
-    fetchData(selectedLocation, selectedScenario, isLiveMode);
-  }, [selectedLocation, selectedScenario, isLiveMode, fetchData]);
+    fetchData(selectedLocationObj, selectedScenario, isLiveMode);
+  }, [selectedLocationObj, selectedScenario, isLiveMode, fetchData]);
 
-  const handleLocationChange = (locId) => {
-    setSelectedLocation(locId);
+  // Handle location selected from SearchBar dropdown
+  const handleSelectLocation = (locObj) => {
+    setSelectedLocationObj(locObj);
+    setIsLiveMode(true); // Searching for a location defaults to Live Weather
+    setUiState('normal');
+  };
+
+  // Handle "Use My Location" browser geolocation
+  const handleUseCurrentLocation = (locObj) => {
+    setSelectedLocationObj(locObj);
+    setIsLiveMode(true);
     setUiState('normal');
   };
 
   const handleScenarioChange = (scenId) => {
     setSelectedScenario(scenId);
-    setIsLiveMode(false); // Switching to a demo scenario leaves live mode
+    setIsLiveMode(false); // Switching to demo scenario disables live feed
     setUiState('normal');
   };
 
@@ -67,24 +92,23 @@ export function Dashboard() {
 
   const handleRetry = () => {
     setUiState('normal');
-    fetchData(selectedLocation, selectedScenario, isLiveMode);
+    fetchData(selectedLocationObj, selectedScenario, isLiveMode);
   };
 
-  // Dynamically evaluate rule-based insights for the currently selected mode using the active weather truth
+  // Dynamically evaluate rule-based insights for active mode
   const currentInsights = weatherData ? generateImpactInsights(activeMode, weatherData) : null;
 
   return (
     <div className="weather-dashboard-layout">
-      {/* Top Application Header */}
+      {/* Top Application Header & Search Bar */}
       <Header
-        selectedLocation={selectedLocation}
-        onLocationChange={handleLocationChange}
-        activeMode={activeMode}
+        onSelectLocation={handleSelectLocation}
+        onUseCurrentLocation={handleUseCurrentLocation}
         lastUpdated={weatherData?.updatedAt}
         isLiveMode={isLiveMode}
       />
 
-      {/* Mode Controls Bar: Distinct switch between Live Open-Meteo & Demo Scenarios */}
+      {/* Mode Controls Bar: Live Open-Meteo & Demo Scenarios */}
       <StateControls
         isLiveMode={isLiveMode}
         onToggleLiveMode={(val) => {
@@ -95,7 +119,7 @@ export function Dashboard() {
         onScenarioChange={handleScenarioChange}
         currentState={uiState}
         onStateChange={handleStateChange}
-        onRefresh={() => fetchData(selectedLocation, selectedScenario, isLiveMode)}
+        onRefresh={() => fetchData(selectedLocationObj, selectedScenario, isLiveMode)}
         isLoading={isLoading}
       />
 
@@ -108,7 +132,7 @@ export function Dashboard() {
 
       {/* Main Content Area */}
       <main className="dashboard-content" id="main-content">
-        {/* State 1: Simulated / Real Loading */}
+        {/* State 1: Loading Skeleton */}
         {(isLoading || uiState === 'loading') && <SkeletonLoader />}
 
         {/* State 2: Error State */}
@@ -147,7 +171,7 @@ export function Dashboard() {
             {/* TAB 1: OVERVIEW DASHBOARD */}
             {activeTab === 'dashboard' && (
               <div className="tab-view-dashboard">
-                {/* Top Row: Weather Consensus Card + Confidence Agreement Card */}
+                {/* Hero Row: Weather Consensus Card + Confidence Agreement Card */}
                 <div className="dashboard-hero-row">
                   <div className="hero-col-primary">
                     <WeatherCard
@@ -166,16 +190,25 @@ export function Dashboard() {
                   </div>
                 </div>
 
-                {/* Middle Row: Impact Mode Selector & Dynamic Insights */}
+                {/* Forecast Section: 24-Hour & 7-Day */}
+                <ForecastSection
+                  hourly={weatherData.hourly}
+                  dailyForecast={weatherData.dailyForecast}
+                />
+
+                {/* WeatherGPT Assistant Interactive Panel */}
+                <WeatherGPTAssistant weatherData={weatherData} />
+
+                {/* Impact Mode Selector & Dynamic Insights */}
                 <section className="dashboard-impact-section" aria-label="Weather Impact Intelligence">
                   <div className="section-header-bar">
                     <div className="section-title-wrap">
-                      <span className="section-step-num">Step 2</span>
+                      <span className="section-step-num">Impact Engine</span>
                       <h2 className="section-heading">Weather Impact Modes</h2>
                     </div>
                     <span className="section-hint">
                       {isLiveMode
-                        ? 'Interpreting real-time Open-Meteo telemetry across 4 personas'
+                        ? `Interpreting live weather in ${weatherData.locationName} across 4 personas`
                         : 'Select a persona to re-interpret identical consensus data'}
                     </span>
                   </div>
@@ -199,11 +232,11 @@ export function Dashboard() {
                   </div>
                 </section>
 
-                {/* Bottom Row: Multi-Source Evidence Preview */}
+                {/* Multi-Source Evidence Preview */}
                 <section className="dashboard-evidence-section" aria-label="Multi-Source Evidence Preview">
                   <div className="section-header-bar">
                     <div className="section-title-wrap">
-                      <span className="section-step-num">Step 1</span>
+                      <span className="section-step-num">Multi-Source</span>
                       <h2 className="section-heading">
                         {isLiveMode ? 'Active Weather Ingestion Stream' : 'Multi-Source Evidence Breakdown'}
                       </h2>
@@ -237,7 +270,24 @@ export function Dashboard() {
               </div>
             )}
 
-            {/* TAB 2: EVIDENCE & CONFIDENCE ENGINE */}
+            {/* TAB 2: DETAILED FORECASTS */}
+            {activeTab === 'forecasts' && (
+              <div className="tab-view-forecasts">
+                <ForecastSection
+                  hourly={weatherData.hourly}
+                  dailyForecast={weatherData.dailyForecast}
+                />
+              </div>
+            )}
+
+            {/* TAB 3: WEATHERGPT AI ASSISTANT */}
+            {activeTab === 'assistant' && (
+              <div className="tab-view-assistant">
+                <WeatherGPTAssistant weatherData={weatherData} />
+              </div>
+            )}
+
+            {/* TAB 4: EVIDENCE & CONFIDENCE ENGINE */}
             {activeTab === 'evidence' && (
               <div className="tab-view-evidence">
                 <div className="evidence-hero">
@@ -271,7 +321,7 @@ export function Dashboard() {
                   ))}
                 </div>
 
-                {/* Model Variance Details Card (Only meaningful for multi-source demo runs) */}
+                {/* Model Variance Breakdown */}
                 {!isLiveMode && weatherData.comparison && (
                   <div className="card variance-details-card">
                     <h4 className="card-heading">Telemetry Variance Breakdown</h4>
@@ -324,7 +374,7 @@ export function Dashboard() {
               </div>
             )}
 
-            {/* TAB 3: IMPACT MODES */}
+            {/* TAB 5: IMPACT MODES */}
             {activeTab === 'impact' && (
               <div className="tab-view-impact">
                 <ImpactModeSelector
@@ -347,7 +397,7 @@ export function Dashboard() {
               </div>
             )}
 
-            {/* TAB 4: CHARTS & COMPARISON */}
+            {/* TAB 6: CHARTS & COMPARISON */}
             {activeTab === 'charts' && (
               <div className="tab-view-charts">
                 <WeatherChart
